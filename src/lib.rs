@@ -1,7 +1,6 @@
 use bendy::{
     decoding::{self, FromBencode, Object, ResultExt},
     encoding::{self, AsString, SingleItemEncoder, ToBencode},
-    value::Value,
 };
 use std::{
     fmt,
@@ -49,15 +48,17 @@ impl FromBytes for Vec<Node> {
     }
 }
 
-impl FromBytes for Vec<SocketAddrV4> {
-    type Output = Result<Self, decoding::Error>;
-    fn from_bytes(bytes: &[u8]) -> Self::Output {
-        let chunks = bytes.chunks(6);
+struct VecSockaddrV4Wrap(Vec<SocketAddrV4>);
+
+impl FromBencode for VecSockaddrV4Wrap {
+    const EXPECTED_RECURSION_DEPTH: usize = 0;
+    fn decode_bencode_object(object: Object) -> Result<Self, decoding::Error> {
+        let mut list = object.try_into_list()?;
         let mut v = Vec::new();
-        for chunk in chunks {
-            v.push(SocketAddrV4::from_bytes(bytes)?);
+        while let Some(bytes) =  list.next_object()? {
+            v.push(SocketAddrV4::from_bytes(bytes.try_into_bytes()?)?)
         }
-        Ok(v)
+        Ok(VecSockaddrV4Wrap(v))
     }
 }
 
@@ -107,7 +108,7 @@ impl IntoBytes for &Node {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub struct Hash {
     pub bytes: [u8; 20],
 }
@@ -135,7 +136,7 @@ impl FromBencode for Hash {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub struct Ping {
     pub id: Hash,
 }
@@ -156,7 +157,7 @@ impl From<A> for Ping {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub struct FindNode {
     pub id: Hash,
     pub target: Hash,
@@ -182,7 +183,7 @@ impl TryFrom<A> for FindNode {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub struct GetPeers {
     pub id: Hash,
     pub info_hash: Hash,
@@ -204,13 +205,13 @@ impl TryFrom<A> for GetPeers {
         Ok(GetPeers {
             id: a.id,
             info_hash: a
-                .target
+                .info_hash
                 .ok_or(decoding::Error::missing_field("info_hash"))?,
         })
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub struct AnnouncePeer {
     pub id: Hash,
     pub implied_port: Option<bool>,
@@ -230,7 +231,7 @@ impl ToBencode for AnnouncePeer {
             }
 
             e.emit_pair(b"info_hash", &self.info_hash)?;
-            e.emit_pair(b"port", &self.port)?;
+            e.emit_pair(b"port", self.port)?;
             // token not a list, it is a byte str
             e.emit_pair(b"token", AsString(&self.token))
         })
@@ -252,7 +253,7 @@ impl TryFrom<A> for AnnouncePeer {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub struct Node {
     pub id: Hash,
     pub addr: SocketAddrV4,
@@ -270,7 +271,7 @@ impl From<[u8; 26]> for Node {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub struct Response {
     id: Hash,
     nodes: Option<Vec<Node>>,
@@ -328,9 +329,7 @@ impl FromBencode for Response {
                         .map(Some)?;
                 }
                 (b"values", value) => {
-                    values =
-                        Vec::<SocketAddrV4>::from_bytes(value.try_into_bytes().context("values")?)
-                            .map(Some)?;
+                    values = VecSockaddrV4Wrap::decode_bencode_object(value).context("values").map(|w| Some(w.0))?;
                 }
                 (b"token", value) => {
                     token = Some(value.try_into_bytes().context("token")?.to_vec())
@@ -347,7 +346,7 @@ impl FromBencode for Response {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub struct Error {
     pub code: i64,
     pub message: String,
@@ -412,6 +411,7 @@ impl ToBencode for PayloadType {
     }
 }
 
+#[derive(Debug, PartialEq)]
 pub enum Payload {
     Ping(Ping),
     FindNode(FindNode),
@@ -457,6 +457,7 @@ impl ToBencode for Payload {
     }
 }
 
+#[derive(Debug, PartialEq)]
 pub struct Message {
     pub transaction_id: u16,
     pub payload: Payload,
@@ -633,7 +634,7 @@ impl FromBencode for A {
 }
 
 impl FromBencode for Message {
-    const EXPECTED_RECURSION_DEPTH: usize = 2;
+    const EXPECTED_RECURSION_DEPTH: usize = 3;
 
     fn decode_bencode_object(object: Object) -> Result<Self, decoding::Error> {
         let mut transaction_id = None;
