@@ -1,11 +1,82 @@
 use bendy::{
+    decoding::{self, FromBencode, Object, ResultExt},
     encoding::{self, AsString, SingleItemEncoder, ToBencode},
     value::Value,
 };
-use std::{net::SocketAddrV4, ops::Deref};
+use std::{
+    fmt,
+    net::{IpAddr, SocketAddr, SocketAddrV4},
+    ops::Deref,
+};
 
 trait IntoBytes {
     fn into_bytes(&self) -> Vec<u8>;
+}
+
+trait FromBytes {
+    type Output;
+    fn from_bytes(bytes: &[u8]) -> Self::Output;
+}
+
+#[derive(Debug)]
+struct MalformedContent {
+    msg: String,
+}
+
+impl From<&str> for MalformedContent {
+    fn from(msg: &str) -> Self {
+        MalformedContent { msg: msg.into() }
+    }
+}
+
+impl fmt::Display for MalformedContent {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.msg)
+    }
+}
+
+impl std::error::Error for MalformedContent {}
+
+impl FromBytes for Vec<Node> {
+    type Output = Result<Self, decoding::Error>;
+    fn from_bytes(bytes: &[u8]) -> Self::Output {
+        let chunks = bytes.chunks(26);
+        let mut v = Vec::new();
+        for chunk in chunks {
+            v.push(Node::from(<[u8; 26]>::try_from(chunk)?));
+        }
+        Ok(v)
+    }
+}
+
+impl FromBytes for Vec<SocketAddrV4> {
+    type Output = Result<Self, decoding::Error>;
+    fn from_bytes(bytes: &[u8]) -> Self::Output {
+        let chunks = bytes.chunks(6);
+        let mut v = Vec::new();
+        for chunk in chunks {
+            v.push(SocketAddrV4::from_bytes(bytes)?);
+        }
+        Ok(v)
+    }
+}
+
+impl FromBytes for SocketAddrV4 {
+    type Output = Result<Self, decoding::Error>;
+    fn from_bytes(bytes: &[u8]) -> Self::Output {
+        if bytes.len() != 6 {
+            return Err(decoding::Error::malformed_content(MalformedContent::from(
+                "sockaddr must be 6 bytes len",
+            )));
+        }
+        let (ip, port) = bytes.split_at(4);
+        let ip = IpAddr::from(<[u8; 4]>::try_from(ip).unwrap());
+        let port = u16::from_be_bytes(<[u8; 2]>::try_from(port).unwrap());
+        Ok(match SocketAddr::from((ip, port)) {
+            SocketAddr::V4(a) => a,
+            _ => panic!(),
+        })
+    }
 }
 
 impl IntoBytes for Vec<Node> {
@@ -52,6 +123,15 @@ impl ToBencode for Hash {
     const MAX_DEPTH: usize = 1;
     fn encode(&self, encoder: SingleItemEncoder) -> Result<(), encoding::Error> {
         encoder.emit_bytes(&self.bytes)
+    }
+}
+
+impl FromBencode for Hash {
+    const EXPECTED_RECURSION_DEPTH: usize = 0;
+    fn decode_bencode_object(object: Object) -> Result<Self, decoding::Error> {
+        Ok(Hash {
+            bytes: object.try_into_bytes()?.try_into()?,
+        })
     }
 }
 
@@ -135,6 +215,18 @@ pub struct Node {
     pub addr: SocketAddrV4,
 }
 
+impl From<[u8; 26]> for Node {
+    fn from(bytes: [u8; 26]) -> Self {
+        let (id, addr) = bytes.split_at(20);
+        Node {
+            id: Hash {
+                bytes: id.try_into().unwrap(),
+            },
+            addr: SocketAddrV4::from_bytes(addr).unwrap(),
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct Response {
     id: Hash,
@@ -163,10 +255,50 @@ impl ToBencode for Response {
             if let Some(values) = &self.values {
                 e.emit_pair(
                     b"values",
-                    values.iter().map(|s| AsString(s.into_bytes())).collect::<Vec<_>>(),
+                    values
+                        .iter()
+                        .map(|s| AsString(s.into_bytes()))
+                        .collect::<Vec<_>>(),
                 )?;
             }
             Ok(())
+        })
+    }
+}
+
+impl FromBencode for Response {
+    const EXPECTED_RECURSION_DEPTH: usize = 0;
+    fn decode_bencode_object(object: Object) -> Result<Self, decoding::Error> {
+        let mut id = None;
+        let mut nodes = None;
+        let mut values = None;
+        let mut token = None;
+
+        let mut dict = object.try_into_dictionary()?;
+        while let Some(pair) = dict.next_pair()? {
+            match pair {
+                (b"id", value) => {
+                    id = Hash::decode_bencode_object(value).context("y").map(Some)?;
+                }
+                (b"nodes", value) => {
+                    nodes = Vec::<Node>::from_bytes(value.try_into_bytes().context("nodes")?)
+                        .map(Some)?;
+                }
+                (b"values", value) => {
+                    values = Vec::<SocketAddrV4>::from_bytes(value.try_into_bytes().context("values")?)
+                        .map(Some)?;
+                }
+                (b"token", value) => {
+                    token = Some(value.try_into_bytes().context("token")?.to_vec())
+                }
+                _ => continue,
+            }
+        }
+        Ok(Response {
+            id: id.ok_or_else(|| decoding::Error::missing_field("id"))?,
+            nodes,
+            values,
+            token,
         })
     }
 }
@@ -189,6 +321,24 @@ impl ToBencode for Error {
         })
     }
 }
+
+impl FromBencode for Error {
+    const EXPECTED_RECURSION_DEPTH: usize = 0;
+
+    fn decode_bencode_object(object: Object) -> Result<Self, decoding::Error> {
+
+        let mut list = object.try_into_list()?;
+        let code = list.next_object()?.ok_or(decoding::Error::missing_field("code"))?;
+        let code = i64::decode_bencode_object(code)?;
+        let message = list.next_object()?.ok_or(decoding::Error::missing_field("code"))?;
+        let message = String::decode_bencode_object(message)?;
+        Ok(Error {
+            code,
+            message
+        })
+    }
+}
+
 
 pub enum PayloadType {
     Query,
@@ -371,3 +521,120 @@ impl ToBencode for Message {
     }
 }
 
+struct A {
+    id: Hash,
+    target: Option<Hash>,
+    info_hash: Option<Hash>,
+    implied_port: Option<bool>,
+    port: Option<u16>,
+    token: Option<Vec<u8>>,
+}
+
+impl FromBencode for A {
+    const EXPECTED_RECURSION_DEPTH: usize = 0;
+    fn decode_bencode_object(object: Object) -> Result<Self, decoding::Error> {
+        let mut id = None;
+        let mut target = None;
+        let mut info_hash = None;
+        let mut implied_port = None;
+        let mut port = None;
+        let mut token = None;
+
+        let mut dict = object.try_into_dictionary()?;
+        while let Some(pair) = dict.next_pair()? {
+            match pair {
+                (b"id", value) => {
+                    id = Hash::decode_bencode_object(value).context("y").map(Some)?;
+                }
+                (b"target", value) => {
+                    target = Hash::decode_bencode_object(value)
+                        .context("target")
+                        .map(Some)?;
+                }
+                (b"info_hash", value) => {
+                    info_hash = Hash::decode_bencode_object(value)
+                        .context("info_hash")
+                        .map(Some)?;
+                }
+                (b"implied_port", value) => {
+                    implied_port = Some(
+                        value
+                            .try_into_integer()
+                            .context("implied_port")?
+                            .parse::<u8>()?
+                            > 0,
+                    )
+                }
+                (b"port", value) => {
+                    port = value
+                        .try_into_integer()
+                        .context("port")?
+                        .parse::<u16>()
+                        .map(Some)?;
+                }
+                (b"token", value) => {
+                    token = Some(value.try_into_bytes().context("token")?.to_vec())
+                }
+                _ => continue,
+            }
+        }
+        Ok(A {
+            id: id.ok_or_else(|| decoding::Error::missing_field("id"))?,
+            implied_port,
+            target,
+            info_hash,
+            port,
+            token,
+        })
+    }
+}
+
+impl FromBencode for Message {
+    const EXPECTED_RECURSION_DEPTH: usize = 2;
+
+    fn decode_bencode_object(object: Object) -> Result<Self, decoding::Error> {
+        let mut transaction_id = None;
+        let mut msg_type = None;
+        let mut query_type = None;
+        let mut a = None;
+        let mut r = None;
+        let mut e = None;
+
+        let mut dict = object.try_into_dictionary()?;
+        while let Some(pair) = dict.next_pair()? {
+            match pair {
+                (b"t", value) => {
+                    transaction_id = Some(u16::from_be_bytes(value.try_into_bytes()?.try_into()?));
+                }
+                (b"y", value) => {
+                    msg_type = String::decode_bencode_object(value)
+                        .context("y")
+                        .map(Some)?;
+                }
+                (b"q", value) => {
+                    query_type = String::decode_bencode_object(value)
+                        .context("q")
+                        .map(Some)?;
+                }
+                (b"a", value) => {
+                    a = A::decode_bencode_object(value).context("y").map(Some)?;
+                }
+                (b"r", value) => {
+                    r = Response::decode_bencode_object(value)
+                        .context("r")
+                        .map(Some)?;
+                }
+                (b"e", value) => {
+                    e = Error::decode_bencode_object(value)
+                        .context("e")
+                        .map(Some)?;
+                }
+                _ => continue,
+            }
+        }
+
+        let transaction_id =
+            transaction_id.ok_or_else(|| decoding::Error::missing_field("transaction_id"))?;
+        todo!()
+    }
+}
