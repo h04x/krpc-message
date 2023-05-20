@@ -150,6 +150,12 @@ impl ToBencode for Ping {
     }
 }
 
+impl From<A> for Ping {
+    fn from(a: A) -> Self {
+        Ping { id: a.id }
+    }
+}
+
 #[derive(Debug)]
 pub struct FindNode {
     pub id: Hash,
@@ -166,6 +172,16 @@ impl ToBencode for FindNode {
     }
 }
 
+impl TryFrom<A> for FindNode {
+    type Error = decoding::Error;
+    fn try_from(a: A) -> Result<Self, Self::Error> {
+        Ok(FindNode {
+            id: a.id,
+            target: a.target.ok_or(decoding::Error::missing_field("target"))?,
+        })
+    }
+}
+
 #[derive(Debug)]
 pub struct GetPeers {
     pub id: Hash,
@@ -178,6 +194,18 @@ impl ToBencode for GetPeers {
         encoder.emit_dict(|mut e| {
             e.emit_pair(b"id", &self.id)?;
             e.emit_pair(b"info_hash", &self.info_hash)
+        })
+    }
+}
+
+impl TryFrom<A> for GetPeers {
+    type Error = decoding::Error;
+    fn try_from(a: A) -> Result<Self, Self::Error> {
+        Ok(GetPeers {
+            id: a.id,
+            info_hash: a
+                .target
+                .ok_or(decoding::Error::missing_field("info_hash"))?,
         })
     }
 }
@@ -205,6 +233,21 @@ impl ToBencode for AnnouncePeer {
             e.emit_pair(b"port", &self.port)?;
             // token not a list, it is a byte str
             e.emit_pair(b"token", AsString(&self.token))
+        })
+    }
+}
+
+impl TryFrom<A> for AnnouncePeer {
+    type Error = decoding::Error;
+    fn try_from(a: A) -> Result<Self, Self::Error> {
+        Ok(AnnouncePeer {
+            id: a.id,
+            implied_port: a.implied_port,
+            info_hash: a
+                .info_hash
+                .ok_or(decoding::Error::missing_field("info_hash"))?,
+            port: a.port.ok_or(decoding::Error::missing_field("port"))?,
+            token: a.token.ok_or(decoding::Error::missing_field("token"))?,
         })
     }
 }
@@ -285,8 +328,9 @@ impl FromBencode for Response {
                         .map(Some)?;
                 }
                 (b"values", value) => {
-                    values = Vec::<SocketAddrV4>::from_bytes(value.try_into_bytes().context("values")?)
-                        .map(Some)?;
+                    values =
+                        Vec::<SocketAddrV4>::from_bytes(value.try_into_bytes().context("values")?)
+                            .map(Some)?;
                 }
                 (b"token", value) => {
                     token = Some(value.try_into_bytes().context("token")?.to_vec())
@@ -326,19 +370,18 @@ impl FromBencode for Error {
     const EXPECTED_RECURSION_DEPTH: usize = 0;
 
     fn decode_bencode_object(object: Object) -> Result<Self, decoding::Error> {
-
         let mut list = object.try_into_list()?;
-        let code = list.next_object()?.ok_or(decoding::Error::missing_field("code"))?;
+        let code = list
+            .next_object()?
+            .ok_or(decoding::Error::missing_field("code"))?;
         let code = i64::decode_bencode_object(code)?;
-        let message = list.next_object()?.ok_or(decoding::Error::missing_field("code"))?;
+        let message = list
+            .next_object()?
+            .ok_or(decoding::Error::missing_field("code"))?;
         let message = String::decode_bencode_object(message)?;
-        Ok(Error {
-            code,
-            message
-        })
+        Ok(Error { code, message })
     }
 }
-
 
 pub enum PayloadType {
     Query,
@@ -625,16 +668,42 @@ impl FromBencode for Message {
                         .map(Some)?;
                 }
                 (b"e", value) => {
-                    e = Error::decode_bencode_object(value)
-                        .context("e")
-                        .map(Some)?;
+                    e = Error::decode_bencode_object(value).context("e").map(Some)?;
                 }
                 _ => continue,
             }
         }
 
-        let transaction_id =
-            transaction_id.ok_or_else(|| decoding::Error::missing_field("transaction_id"))?;
-        todo!()
+        let transaction_id = transaction_id.ok_or_else(|| decoding::Error::missing_field("t"))?;
+        let msg_type = msg_type.ok_or_else(|| decoding::Error::missing_field("y"))?;
+
+        let payload = match msg_type.as_str() {
+            "q" => {
+                let query_type = query_type.ok_or_else(|| decoding::Error::missing_field("q"))?;
+                let a = a.ok_or_else(|| decoding::Error::missing_field("a"))?;
+                match query_type.as_str() {
+                    "ping" => Payload::Ping(a.into()),
+                    "find_node" => Payload::FindNode(a.try_into()?),
+                    "get_peers" => Payload::GetPeers(a.try_into()?),
+                    "announce_peer" => Payload::AnnouncePeer(a.try_into()?),
+                    _ => {
+                        return Err(decoding::Error::malformed_content(MalformedContent::from(
+                            "'q' must be one of ping/find_node/get_peers/announce_peer",
+                        )))
+                    }
+                }
+            }
+            "r" => Payload::Response(r.ok_or_else(|| decoding::Error::missing_field("e"))?),
+            "e" => Payload::Error(e.ok_or_else(|| decoding::Error::missing_field("e"))?),
+            _ => {
+                return Err(decoding::Error::malformed_content(MalformedContent::from(
+                    "'y' must be one of q/r/e",
+                )))
+            }
+        };
+        Ok(Message {
+            transaction_id,
+            payload,
+        })
     }
 }
