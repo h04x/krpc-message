@@ -42,7 +42,9 @@ impl FromBytes for Vec<Node> {
         let chunks = bytes.chunks(26);
         let mut v = Vec::new();
         for chunk in chunks {
-            v.push(Node::from(<[u8; 26]>::try_from(chunk)?));
+            v.push(Node::from(
+                <[u8; 26]>::try_from(chunk).map_err(|e| decoding::Error::malformed_content(e))?,
+            ));
         }
         Ok(v)
     }
@@ -55,7 +57,7 @@ impl FromBencode for VecSockaddrV4Wrap {
     fn decode_bencode_object(object: Object) -> Result<Self, decoding::Error> {
         let mut list = object.try_into_list()?;
         let mut v = Vec::new();
-        while let Some(bytes) =  list.next_object()? {
+        while let Some(bytes) = list.next_object()? {
             v.push(SocketAddrV4::from_bytes(bytes.try_into_bytes()?)?)
         }
         Ok(VecSockaddrV4Wrap(v))
@@ -131,7 +133,10 @@ impl FromBencode for Hash {
     const EXPECTED_RECURSION_DEPTH: usize = 0;
     fn decode_bencode_object(object: Object) -> Result<Self, decoding::Error> {
         Ok(Hash {
-            bytes: object.try_into_bytes()?.try_into()?,
+            bytes: object
+                .try_into_bytes()?
+                .try_into()
+                .map_err(|e| decoding::Error::malformed_content(e))?,
         })
     }
 }
@@ -329,7 +334,9 @@ impl FromBencode for Response {
                         .map(Some)?;
                 }
                 (b"values", value) => {
-                    values = VecSockaddrV4Wrap::decode_bencode_object(value).context("values").map(|w| Some(w.0))?;
+                    values = VecSockaddrV4Wrap::decode_bencode_object(value)
+                        .context("values")
+                        .map(|w| Some(w.0))?;
                 }
                 (b"token", value) => {
                     token = Some(value.try_into_bytes().context("token")?.to_vec())
@@ -648,7 +655,12 @@ impl FromBencode for Message {
         while let Some(pair) = dict.next_pair()? {
             match pair {
                 (b"t", value) => {
-                    transaction_id = Some(u16::from_be_bytes(value.try_into_bytes()?.try_into()?));
+                    transaction_id = Some(u16::from_be_bytes(
+                        value
+                            .try_into_bytes()?
+                            .try_into()
+                            .map_err(|e| decoding::Error::malformed_content(e))?,
+                    ));
                 }
                 (b"y", value) => {
                     msg_type = String::decode_bencode_object(value)
