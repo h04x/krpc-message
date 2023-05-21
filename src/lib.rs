@@ -281,10 +281,10 @@ impl From<[u8; 26]> for Node {
 
 #[derive(Debug, PartialEq)]
 pub struct Response {
-    id: Hash,
-    nodes: Option<Vec<Node>>,
-    values: Option<Vec<SocketAddrV4>>,
-    token: Option<Vec<u8>>,
+    pub id: Hash,
+    pub nodes: Option<Vec<Node>>,
+    pub values: Option<Vec<SocketAddrV4>>,
+    pub token: Option<Vec<u8>>,
 }
 
 impl ToBencode for Response {
