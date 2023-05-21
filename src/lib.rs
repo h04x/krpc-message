@@ -1,3 +1,6 @@
+#[cfg(test)]
+mod tests;
+
 use bendy::{
     decoding::{self, FromBencode, Object, ResultExt},
     encoding::{self, AsString, SingleItemEncoder, ToBencode},
@@ -345,7 +348,7 @@ impl FromBencode for Response {
             }
         }
         Ok(Response {
-            id: id.ok_or_else(|| decoding::Error::missing_field("id"))?,
+            id: id.ok_or(decoding::Error::missing_field("id"))?,
             nodes,
             values,
             token,
@@ -630,7 +633,7 @@ impl FromBencode for A {
             }
         }
         Ok(A {
-            id: id.ok_or_else(|| decoding::Error::missing_field("id"))?,
+            id: id.ok_or(decoding::Error::missing_field("id"))?,
             implied_port,
             target,
             info_hash,
@@ -687,13 +690,13 @@ impl FromBencode for Message {
             }
         }
 
-        let transaction_id = transaction_id.ok_or_else(|| decoding::Error::missing_field("t"))?;
-        let msg_type = msg_type.ok_or_else(|| decoding::Error::missing_field("y"))?;
+        let transaction_id = transaction_id.ok_or(decoding::Error::missing_field("t"))?;
+        let msg_type = msg_type.ok_or(decoding::Error::missing_field("y"))?;
 
         let payload = match msg_type.as_str() {
             "q" => {
-                let query_type = query_type.ok_or_else(|| decoding::Error::missing_field("q"))?;
-                let a = a.ok_or_else(|| decoding::Error::missing_field("a"))?;
+                let query_type = query_type.ok_or(decoding::Error::missing_field("q"))?;
+                let a = a.ok_or(decoding::Error::missing_field("a"))?;
                 match query_type.as_str() {
                     "ping" => Payload::Ping(a.into()),
                     "find_node" => Payload::FindNode(a.try_into()?),
@@ -706,8 +709,8 @@ impl FromBencode for Message {
                     }
                 }
             }
-            "r" => Payload::Response(r.ok_or_else(|| decoding::Error::missing_field("e"))?),
-            "e" => Payload::Error(e.ok_or_else(|| decoding::Error::missing_field("e"))?),
+            "r" => Payload::Response(r.ok_or(decoding::Error::missing_field("e"))?),
+            "e" => Payload::Error(e.ok_or(decoding::Error::missing_field("e"))?),
             _ => {
                 return Err(decoding::Error::malformed_content(MalformedContent::from(
                     "'y' must be one of q/r/e",
