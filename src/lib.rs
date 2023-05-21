@@ -261,7 +261,7 @@ impl TryFrom<A> for AnnouncePeer {
     }
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub struct Node {
     pub id: Hash,
     pub addr: SocketAddrV4,
