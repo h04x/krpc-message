@@ -113,7 +113,7 @@ impl IntoBytes for &Node {
     }
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub struct Hash {
     pub bytes: [u8; 20],
 }
