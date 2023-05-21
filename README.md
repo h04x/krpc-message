@@ -1,3 +1,9 @@
+# KRPC-message
+
+
+bittorent dht krpc message serialize deserialize 
+## Example
+```Rust
 use std::assert_eq;
 
 use bendy::{decoding::FromBencode, encoding::ToBencode};
@@ -14,3 +20,4 @@ fn main() {
     let msg = Message::from_bencode(&ping_bencode).unwrap();
     assert_eq!(ping, msg);
 }
+```

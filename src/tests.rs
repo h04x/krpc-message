@@ -1,6 +1,6 @@
-use bendy::{encoding::ToBencode, decoding::FromBencode};
+use bendy::{decoding::FromBencode, encoding::ToBencode};
 
-use crate::{Message, Node, Hash};
+use crate::{Hash, Message, Node};
 
 #[test]
 fn test() {
