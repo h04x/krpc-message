@@ -1,7 +1,7 @@
 #[cfg(test)]
 mod tests;
 
-use bendy::{
+pub use bendy::{
     decoding::{self, FromBencode, Object, ResultExt},
     encoding::{self, AsString, SingleItemEncoder, ToBencode},
 };
