@@ -113,7 +113,7 @@ impl IntoBytes for &Node {
     }
 }
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(PartialEq, Clone)]
 pub struct Hash {
     pub bytes: [u8; 20],
 }
@@ -122,6 +122,15 @@ impl Deref for Hash {
     type Target = [u8];
     fn deref(&self) -> &Self::Target {
         &self.bytes
+    }
+}
+
+impl fmt::Debug for Hash {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        for c in self.bytes {
+            write!(f, "{:02x}", c)?;
+        }
+        Ok(())
     }
 }
 
