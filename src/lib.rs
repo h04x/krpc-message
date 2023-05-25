@@ -125,6 +125,13 @@ impl Deref for Hash {
     }
 }
 
+impl AsRef<[u8; 20]> for Hash
+{
+    fn as_ref(&self) -> &[u8; 20] {
+        &self.bytes
+    }
+}
+
 impl fmt::Debug for Hash {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         for c in self.bytes {
