@@ -4,6 +4,7 @@ mod tests;
 pub use bendy::{
     decoding::{self, FromBencode, Object, ResultExt},
     encoding::{self, AsString, SingleItemEncoder, ToBencode},
+    value::Value
 };
 use std::{
     fmt,
