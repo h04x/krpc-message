@@ -243,9 +243,9 @@ impl ToBencode for QueryArgs {
     }
 }
 
-struct SocketAddrV4Wrap(SocketAddrV4);
+struct SocketAddrV4Wrap<T>(T);
 
-impl TryFrom<&[u8]> for SocketAddrV4Wrap {
+impl TryFrom<&[u8]> for SocketAddrV4Wrap<SocketAddrV4> {
     type Error = ();
     fn try_from(bytes: &[u8]) -> Result<Self, Self::Error> {
         if bytes.len() != 6 {
@@ -302,8 +302,8 @@ impl From<[u8; 26]> for Node {
     }
 }
 
-impl From<Node> for [u8; 26] {
-    fn from(node: Node) -> Self {
+impl From<&Node> for [u8; 26] {
+    fn from(node: &Node) -> Self {
         let mut bytes = [0u8; 26];
         bytes.copy_from_slice(&node.id.bytes);
         bytes[20..].copy_from_slice(&Into::<[u8; 6]>::into(SocketAddrV4Wrap(node.addr)));
@@ -311,9 +311,9 @@ impl From<Node> for [u8; 26] {
     }
 }
 
-struct VecNodeWrap(Vec<Node>);
+struct VecNodeWrap<T>(T);
 
-impl FromBencode for VecNodeWrap {
+impl FromBencode for VecNodeWrap<Vec<Node>> {
     const EXPECTED_RECURSION_DEPTH: usize = 0;
     fn decode_bencode_object(object: Object) -> Result<Self, bendy::decoding::Error> {
         let bytes = object.try_into_bytes()?;
@@ -328,17 +328,23 @@ impl FromBencode for VecNodeWrap {
     }
 }
 
-impl ToBencode for VecNodeWrap {
+impl<T> ToBencode for VecNodeWrap<T>
+where
+    T: AsRef<[Node]>,
+{
     const MAX_DEPTH: usize = 0;
 
     fn encode(&self, encoder: SingleItemEncoder) -> Result<(), bendy::encoding::Error> {
-        let bytes = Vec::new();
+        let mut bytes = Vec::new();
+        for node in self.0.as_ref() {
+            bytes.extend_from_slice(&Into::<[u8; 26]>::into(node))
+        }
         encoder.emit_bytes(&bytes)
     }
 }
 
-impl From<VecNodeWrap> for Vec<Node> {
-    fn from(wrap: VecNodeWrap) -> Self {
+impl From<VecNodeWrap<Vec<Node>>> for Vec<Node> {
+    fn from(wrap: VecNodeWrap<Vec<Node>>) -> Self {
         wrap.0
     }
 }
@@ -399,13 +405,14 @@ impl ToBencode for Response {
     fn encode(&self, encoder: SingleItemEncoder) -> Result<(), bendy::encoding::Error> {
         encoder.emit_dict(|mut e| {
             e.emit_pair(b"id", &self.sender_id)?;
-            /*if let Some(nodes) = &self.nodes {
+            
+            if let Some(nodes) = &self.nodes {
                 e.emit_pair(b"nodes", VecNodeWrap(nodes))?;
             }
             if let Some(values) = &self.values {
-                e.emit_pair(b"values", values)?;
+                e.emit_pair(b"values", values.iter().map(|i| SocketAddrV4Wrap(i)).collect())?;
             }
-            if let Some(token) = &self.token {
+            /*if let Some(token) = &self.token {
                 e.emit_pair(b"token", AsString(token))?;
             }*/
             Ok(())
