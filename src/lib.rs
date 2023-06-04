@@ -1,6 +1,4 @@
 use std::{
-    borrow::{Borrow, Cow},
-    collections::BTreeMap,
     fmt::{self, Debug, Display},
     net::{IpAddr, SocketAddr, SocketAddrV4},
 };
@@ -8,7 +6,6 @@ use std::{
 use bendy::{
     decoding::{FromBencode, Object, ResultExt},
     encoding::{AsString, SingleItemEncoder, ToBencode},
-    value::Value,
 };
 
 #[derive(Debug)]
@@ -28,19 +25,6 @@ macro_rules! missing {
     ($m:expr) => {
         bendy::decoding::Error::missing_field($m)
     };
-}
-
-trait UnwrapValue<'a> {
-    fn try_bytes(&self) -> Option<&Cow<'a, [u8]>>;
-}
-
-impl<'a> UnwrapValue<'a> for Value<'a> {
-    fn try_bytes(&self) -> Option<&Cow<'a, [u8]>> {
-        match self {
-            Value::Bytes(v) => Some(v),
-            _ => None,
-        }
-    }
 }
 
 #[derive(PartialEq, Clone)]
@@ -261,8 +245,8 @@ impl TryFrom<&[u8]> for SocketAddrV4Wrap<SocketAddrV4> {
     }
 }
 
-impl From<SocketAddrV4Wrap> for [u8; 6] {
-    fn from(addr: SocketAddrV4Wrap) -> Self {
+impl From<&SocketAddrV4Wrap<&SocketAddrV4>> for [u8; 6] {
+    fn from(addr: &SocketAddrV4Wrap<&SocketAddrV4>) -> Self {
         let mut bytes = [0u8; 6];
         bytes.copy_from_slice(&addr.0.ip().octets());
         bytes[4..].copy_from_slice(&addr.0.port().to_be_bytes());
@@ -270,7 +254,25 @@ impl From<SocketAddrV4Wrap> for [u8; 6] {
     }
 }
 
-impl FromBencode for SocketAddrV4Wrap {
+/*impl From<SocketAddrV4Wrap<&SocketAddrV4>> for [u8; 6] {
+    fn from(addr: SocketAddrV4Wrap<&SocketAddrV4>) -> Self {
+        let mut bytes = [0u8; 6];
+        bytes.copy_from_slice(&addr.0.ip().octets());
+        bytes[4..].copy_from_slice(&addr.0.port().to_be_bytes());
+        bytes
+    }
+}*/
+
+impl From<SocketAddrV4Wrap<SocketAddrV4>> for [u8; 6] {
+    fn from(addr: SocketAddrV4Wrap<SocketAddrV4>) -> Self {
+        let mut bytes = [0u8; 6];
+        bytes.copy_from_slice(&addr.0.ip().octets());
+        bytes[4..].copy_from_slice(&addr.0.port().to_be_bytes());
+        bytes
+    }
+}
+
+impl FromBencode for SocketAddrV4Wrap<SocketAddrV4> {
     const EXPECTED_RECURSION_DEPTH: usize = 0;
     fn decode_bencode_object(object: Object) -> Result<Self, bendy::decoding::Error> {
         let bytes = object.try_into_bytes()?;
@@ -278,8 +280,16 @@ impl FromBencode for SocketAddrV4Wrap {
     }
 }
 
-impl From<SocketAddrV4Wrap> for SocketAddrV4 {
-    fn from(wrap: SocketAddrV4Wrap) -> Self {
+impl ToBencode for SocketAddrV4Wrap<&SocketAddrV4> {
+    const MAX_DEPTH: usize = 0;
+
+    fn encode(&self, encoder: SingleItemEncoder) -> Result<(), bendy::encoding::Error> {
+        encoder.emit_bytes(&Into::<[u8; 6]>::into(self))
+    }
+}
+
+impl From<SocketAddrV4Wrap<SocketAddrV4>> for SocketAddrV4 {
+    fn from(wrap: SocketAddrV4Wrap<SocketAddrV4>) -> Self {
         wrap.0
     }
 }
@@ -321,7 +331,7 @@ impl FromBencode for VecNodeWrap<Vec<Node>> {
         let mut v = Vec::new();
         for chunk in chunks {
             v.push(Node::from(
-                <[u8; 26]>::try_from(chunk).map_err(|e| malformed!("node must be 26 bytes"))?,
+                <[u8; 26]>::try_from(chunk).map_err(|_| malformed!("node must be 26 bytes"))?,
             ));
         }
         Ok(VecNodeWrap(v))
@@ -377,7 +387,7 @@ impl FromBencode for Response {
                         .map(|i| Some(i.into()))?;
                 }
                 (b"values", value) => {
-                    values = Vec::<SocketAddrV4Wrap>::decode_bencode_object(value)
+                    values = Vec::<SocketAddrV4Wrap<SocketAddrV4>>::decode_bencode_object(value)
                         .context("values")
                         .map(|v| Some(v.into_iter().map(|i| i.into()).collect()))?;
                 }
@@ -405,16 +415,19 @@ impl ToBencode for Response {
     fn encode(&self, encoder: SingleItemEncoder) -> Result<(), bendy::encoding::Error> {
         encoder.emit_dict(|mut e| {
             e.emit_pair(b"id", &self.sender_id)?;
-            
+
             if let Some(nodes) = &self.nodes {
                 e.emit_pair(b"nodes", VecNodeWrap(nodes))?;
             }
-            if let Some(values) = &self.values {
-                e.emit_pair(b"values", values.iter().map(|i| SocketAddrV4Wrap(i)).collect())?;
-            }
-            /*if let Some(token) = &self.token {
+            if let Some(token) = &self.token {
                 e.emit_pair(b"token", AsString(token))?;
-            }*/
+            }
+            if let Some(values) = &self.values {
+                e.emit_pair(
+                    b"values",
+                    values.iter().map(SocketAddrV4Wrap).collect::<Vec<_>>(),
+                )?;
+            }
             Ok(())
         })
     }
@@ -435,6 +448,17 @@ impl FromBencode for Error {
         let message = list.next_object()?.ok_or(missing!("message"))?;
         let message = String::decode_bencode_object(message)?;
         Ok(Error { code, message })
+    }
+}
+
+impl ToBencode for Error {
+    const MAX_DEPTH: usize = 0;
+
+    fn encode(&self, encoder: SingleItemEncoder) -> Result<(), bendy::encoding::Error> {
+        encoder.emit_list(|e| {
+            e.emit_int(self.code)?;
+            e.emit_str(&self.message)
+        })
     }
 }
 
@@ -514,21 +538,20 @@ impl ToBencode for Message {
 
     fn encode(&self, encoder: SingleItemEncoder) -> Result<(), bendy::encoding::Error> {
         encoder.emit_dict(|mut e| {
-            if let Some(query_type) = &self.query_type {
-                e.emit_pair(b"q", query_type)?;
-            }
-            e.emit_pair(b"t", AsString(self.transaction_id.to_be_bytes()))?;
-            e.emit_pair(b"y", &self.msg_type)?;
-
             if let Some(query_args) = &self.query_args {
                 e.emit_pair(b"a", query_args)?;
+            }
+            if let Some(error) = &self.error {
+                e.emit_pair(b"e", error)?;
+            }
+            if let Some(query_type) = &self.query_type {
+                e.emit_pair(b"q", query_type)?;
             }
             if let Some(response) = &self.response {
                 e.emit_pair(b"r", response)?;
             }
-            /*if let Some(error) = &self.error {
-                e.emit_pair(b"e", error)?;
-            }*/
+            e.emit_pair(b"t", AsString(self.transaction_id.to_be_bytes()))?;
+            e.emit_pair(b"y", &self.msg_type)?;
             Ok(())
         })
     }
