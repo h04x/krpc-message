@@ -7,7 +7,7 @@ use std::{
 
 use bendy::{
     decoding::{FromBencode, Object, ResultExt},
-    encoding::AsString,
+    encoding::{AsString, SingleItemEncoder, ToBencode},
     value::Value,
 };
 
@@ -60,6 +60,13 @@ impl FromBencode for Hash {
     }
 }
 
+impl ToBencode for Hash {
+    const MAX_DEPTH: usize = 0;
+    fn encode(&self, encoder: SingleItemEncoder) -> Result<(), bendy::encoding::Error> {
+        encoder.emit_bytes(&self.bytes)
+    }
+}
+
 impl fmt::Debug for Hash {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         for c in self.bytes {
@@ -91,6 +98,18 @@ impl FromBencode for MessageType {
     }
 }
 
+impl ToBencode for MessageType {
+    const MAX_DEPTH: usize = 0;
+
+    fn encode(&self, encoder: SingleItemEncoder) -> Result<(), bendy::encoding::Error> {
+        encoder.emit_bytes(match self {
+            Self::Query => b"q",
+            Self::Response => b"r",
+            Self::Error => b"e",
+        })
+    }
+}
+
 #[derive(Debug, PartialEq, Clone)]
 pub enum QueryType {
     Ping,
@@ -115,14 +134,27 @@ impl FromBencode for QueryType {
     }
 }
 
+impl ToBencode for QueryType {
+    const MAX_DEPTH: usize = 0;
+
+    fn encode(&self, encoder: SingleItemEncoder) -> Result<(), bendy::encoding::Error> {
+        encoder.emit_bytes(match self {
+            Self::Ping => b"ping",
+            Self::FindNone => b"find_node",
+            Self::GetPeers => b"get_peers",
+            Self::AnnouncePeer => b"announce_peer",
+        })
+    }
+}
+
 #[derive(Debug, PartialEq, Clone)]
 pub struct QueryArgs {
-    sender_id: Hash, // id
-    target: Option<Hash>,
-    info_hash: Option<Hash>,
-    implied_port: Option<bool>,
-    port: Option<u16>,
-    token: Option<Vec<u8>>,
+    pub sender_id: Hash, // id
+    pub target: Option<Hash>,
+    pub info_hash: Option<Hash>,
+    pub implied_port: Option<bool>,
+    pub port: Option<u16>,
+    pub token: Option<Vec<u8>>,
 }
 
 impl FromBencode for QueryArgs {
@@ -185,6 +217,32 @@ impl FromBencode for QueryArgs {
     }
 }
 
+impl ToBencode for QueryArgs {
+    const MAX_DEPTH: usize = 0;
+
+    fn encode(&self, encoder: SingleItemEncoder) -> Result<(), bendy::encoding::Error> {
+        encoder.emit_dict(|mut e| {
+            e.emit_pair(b"id", &self.sender_id)?;
+            if let Some(target) = &self.target {
+                e.emit_pair(b"target", target)?;
+            }
+            if let Some(info_hash) = &self.info_hash {
+                e.emit_pair(b"info_hash", info_hash)?;
+            }
+            if let Some(implied_port) = &self.implied_port {
+                e.emit_pair(b"implied_port", *implied_port as u8)?;
+            }
+            if let Some(port) = &self.port {
+                e.emit_pair(b"port", port)?;
+            }
+            if let Some(token) = &self.token {
+                e.emit_pair(b"token", AsString(token))?;
+            }
+            Ok(())
+        })
+    }
+}
+
 struct SocketAddrV4Wrap(SocketAddrV4);
 
 impl TryFrom<&[u8]> for SocketAddrV4Wrap {
@@ -203,11 +261,20 @@ impl TryFrom<&[u8]> for SocketAddrV4Wrap {
     }
 }
 
+impl From<SocketAddrV4Wrap> for [u8; 6] {
+    fn from(addr: SocketAddrV4Wrap) -> Self {
+        let mut bytes = [0u8; 6];
+        bytes.copy_from_slice(&addr.0.ip().octets());
+        bytes[4..].copy_from_slice(&addr.0.port().to_be_bytes());
+        bytes
+    }
+}
+
 impl FromBencode for SocketAddrV4Wrap {
     const EXPECTED_RECURSION_DEPTH: usize = 0;
     fn decode_bencode_object(object: Object) -> Result<Self, bendy::decoding::Error> {
         let bytes = object.try_into_bytes()?;
-        SocketAddrV4Wrap::try_from(bytes).map_err(|_|malformed!(" SocketAddrV4 must be 6 bytes"))
+        SocketAddrV4Wrap::try_from(bytes).map_err(|_| malformed!(" SocketAddrV4 must be 6 bytes"))
     }
 }
 
@@ -235,6 +302,15 @@ impl From<[u8; 26]> for Node {
     }
 }
 
+impl From<Node> for [u8; 26] {
+    fn from(node: Node) -> Self {
+        let mut bytes = [0u8; 26];
+        bytes.copy_from_slice(&node.id.bytes);
+        bytes[20..].copy_from_slice(&Into::<[u8; 6]>::into(SocketAddrV4Wrap(node.addr)));
+        bytes
+    }
+}
+
 struct VecNodeWrap(Vec<Node>);
 
 impl FromBencode for VecNodeWrap {
@@ -252,6 +328,15 @@ impl FromBencode for VecNodeWrap {
     }
 }
 
+impl ToBencode for VecNodeWrap {
+    const MAX_DEPTH: usize = 0;
+
+    fn encode(&self, encoder: SingleItemEncoder) -> Result<(), bendy::encoding::Error> {
+        let bytes = Vec::new();
+        encoder.emit_bytes(&bytes)
+    }
+}
+
 impl From<VecNodeWrap> for Vec<Node> {
     fn from(wrap: VecNodeWrap) -> Self {
         wrap.0
@@ -260,7 +345,7 @@ impl From<VecNodeWrap> for Vec<Node> {
 
 #[derive(Debug, PartialEq, Clone)]
 pub struct Response {
-    pub sender_id: Hash,
+    pub sender_id: Hash, // id
     pub nodes: Option<Vec<Node>>,
     pub values: Option<Vec<SocketAddrV4>>,
     pub token: Option<Vec<u8>>,
@@ -308,6 +393,26 @@ impl FromBencode for Response {
     }
 }
 
+impl ToBencode for Response {
+    const MAX_DEPTH: usize = 0;
+
+    fn encode(&self, encoder: SingleItemEncoder) -> Result<(), bendy::encoding::Error> {
+        encoder.emit_dict(|mut e| {
+            e.emit_pair(b"id", &self.sender_id)?;
+            /*if let Some(nodes) = &self.nodes {
+                e.emit_pair(b"nodes", VecNodeWrap(nodes))?;
+            }
+            if let Some(values) = &self.values {
+                e.emit_pair(b"values", values)?;
+            }
+            if let Some(token) = &self.token {
+                e.emit_pair(b"token", AsString(token))?;
+            }*/
+            Ok(())
+        })
+    }
+}
+
 #[derive(Debug, PartialEq, Clone)]
 pub struct Error {
     pub code: i64,
@@ -328,12 +433,12 @@ impl FromBencode for Error {
 
 #[derive(Debug)]
 pub struct Message {
-    transaction_id: u16,           // t
-    msg_type: MessageType,         // y
-    query_type: Option<QueryType>, // q
-    query_args: Option<QueryArgs>, // a
-    response: Option<Response>,    // r
-    error: Option<Error>,          // e
+    pub transaction_id: u16,           // t
+    pub msg_type: MessageType,         // y
+    pub query_type: Option<QueryType>, // q
+    pub query_args: Option<QueryArgs>, // a
+    pub response: Option<Response>,    // r
+    pub error: Option<Error>,          // e
 }
 
 impl FromBencode for Message {
@@ -393,6 +498,31 @@ impl FromBencode for Message {
             query_args,
             response,
             error,
+        })
+    }
+}
+
+impl ToBencode for Message {
+    const MAX_DEPTH: usize = 3;
+
+    fn encode(&self, encoder: SingleItemEncoder) -> Result<(), bendy::encoding::Error> {
+        encoder.emit_dict(|mut e| {
+            if let Some(query_type) = &self.query_type {
+                e.emit_pair(b"q", query_type)?;
+            }
+            e.emit_pair(b"t", AsString(self.transaction_id.to_be_bytes()))?;
+            e.emit_pair(b"y", &self.msg_type)?;
+
+            if let Some(query_args) = &self.query_args {
+                e.emit_pair(b"a", query_args)?;
+            }
+            if let Some(response) = &self.response {
+                e.emit_pair(b"r", response)?;
+            }
+            /*if let Some(error) = &self.error {
+                e.emit_pair(b"e", error)?;
+            }*/
+            Ok(())
         })
     }
 }
