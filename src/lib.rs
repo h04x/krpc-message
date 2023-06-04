@@ -7,6 +7,7 @@ use std::{
 
 use bendy::{
     decoding::{FromBencode, Object, ResultExt},
+    encoding::AsString,
     value::Value,
 };
 
@@ -165,9 +166,9 @@ impl FromBencode for QueryArgs {
                         .map(Some)?;
                 }
                 (b"token", value) => {
-                    token = Vec::<u8>::decode_bencode_object(value)
+                    token = AsString::decode_bencode_object(value)
                         .context("token")
-                        .map(Some)?;
+                        .map(|i| Some(i.0))?;
                 }
                 _ => continue,
             }
@@ -186,20 +187,27 @@ impl FromBencode for QueryArgs {
 
 struct SocketAddrV4Wrap(SocketAddrV4);
 
-impl FromBencode for SocketAddrV4Wrap {
-    const EXPECTED_RECURSION_DEPTH: usize = 0;
-    fn decode_bencode_object(object: Object) -> Result<Self, bendy::decoding::Error> {
-        let bytes = object.try_into_bytes()?;
+impl TryFrom<&[u8]> for SocketAddrV4Wrap {
+    type Error = ();
+    fn try_from(bytes: &[u8]) -> Result<Self, Self::Error> {
         if bytes.len() != 6 {
-            return Err(malformed!("sockaddr4 must be 6 bytes len"));
+            return Err(());
         }
         let (ip, port) = bytes.split_at(4);
         let ip = IpAddr::from(<[u8; 4]>::try_from(ip).unwrap());
         let port = u16::from_be_bytes(<[u8; 2]>::try_from(port).unwrap());
         Ok(match SocketAddr::from((ip, port)) {
             SocketAddr::V4(a) => SocketAddrV4Wrap(a),
-            _ => panic!(),
+            _ => unreachable!(),
         })
+    }
+}
+
+impl FromBencode for SocketAddrV4Wrap {
+    const EXPECTED_RECURSION_DEPTH: usize = 0;
+    fn decode_bencode_object(object: Object) -> Result<Self, bendy::decoding::Error> {
+        let bytes = object.try_into_bytes()?;
+        SocketAddrV4Wrap::try_from(bytes).map_err(|_|malformed!(" SocketAddrV4 must be 6 bytes"))
     }
 }
 
@@ -222,7 +230,7 @@ impl From<[u8; 26]> for Node {
             id: Hash {
                 bytes: id.try_into().unwrap(),
             },
-            addr: SocketAddrV4Wrap::from_bencode(addr).unwrap().into(),
+            addr: SocketAddrV4Wrap::try_from(addr).unwrap().into(),
         }
     }
 }
@@ -283,9 +291,9 @@ impl FromBencode for Response {
                         .map(|v| Some(v.into_iter().map(|i| i.into()).collect()))?;
                 }
                 (b"token", value) => {
-                    token = Vec::<u8>::decode_bencode_object(value)
+                    token = AsString::decode_bencode_object(value)
                         .context("token")
-                        .map(Some)?;
+                        .map(|i| Some(i.0))?;
                 }
                 _ => continue,
             }
@@ -323,13 +331,13 @@ pub struct Message {
     transaction_id: u16,           // t
     msg_type: MessageType,         // y
     query_type: Option<QueryType>, // q
-    query_args: Option<QueryArgs>,       // a
+    query_args: Option<QueryArgs>, // a
     response: Option<Response>,    // r
     error: Option<Error>,          // e
 }
 
 impl FromBencode for Message {
-    const EXPECTED_RECURSION_DEPTH: usize = 2;
+    const EXPECTED_RECURSION_DEPTH: usize = 3;
     fn decode_bencode_object(object: Object) -> Result<Self, bendy::decoding::Error> {
         let mut transaction_id = None;
         let mut msg_type = None;
