@@ -1,3 +1,6 @@
+#[cfg(test)]
+mod tests;
+
 use std::{
     fmt::{self, Debug, Display},
     net::{IpAddr, SocketAddr, SocketAddrV4},
@@ -57,6 +60,12 @@ impl fmt::Debug for Hash {
             write!(f, "{:02x}", c)?;
         }
         Ok(())
+    }
+}
+
+impl From<&[u8; 20]> for Hash {
+    fn from(bytes: &[u8; 20]) -> Self {
+        Hash { bytes: *bytes }
     }
 }
 
@@ -157,21 +166,16 @@ impl FromBencode for QueryArgs {
                 (b"id", value) => {
                     sender_id = Hash::decode_bencode_object(value).context("id").map(Some)?;
                 }
-                (b"target", value) => {
-                    target = Hash::decode_bencode_object(value)
-                        .context("target")
-                        .map(Some)?;
-                }
-                (b"info_hash", value) => {
-                    info_hash = Hash::decode_bencode_object(value)
-                        .context("info_hash")
-                        .map(Some)?;
-                }
                 (b"implied_port", value) => {
                     implied_port = value
                         .try_into_integer()
                         .context("implied_port")
                         .map(|i| Some(i == "1"))?;
+                }
+                (b"info_hash", value) => {
+                    info_hash = Hash::decode_bencode_object(value)
+                        .context("info_hash")
+                        .map(Some)?;
                 }
                 (b"port", value) => {
                     port = value
@@ -179,6 +183,11 @@ impl FromBencode for QueryArgs {
                         .context("port")?
                         .parse::<u16>()
                         .map_err(|_| malformed!("must be valid integer"))
+                        .map(Some)?;
+                }
+                (b"target", value) => {
+                    target = Hash::decode_bencode_object(value)
+                        .context("target")
                         .map(Some)?;
                 }
                 (b"token", value) => {
@@ -207,17 +216,17 @@ impl ToBencode for QueryArgs {
     fn encode(&self, encoder: SingleItemEncoder) -> Result<(), bendy::encoding::Error> {
         encoder.emit_dict(|mut e| {
             e.emit_pair(b"id", &self.sender_id)?;
-            if let Some(target) = &self.target {
-                e.emit_pair(b"target", target)?;
+            if let Some(implied_port) = &self.implied_port {
+                e.emit_pair(b"implied_port", *implied_port as u8)?;
             }
             if let Some(info_hash) = &self.info_hash {
                 e.emit_pair(b"info_hash", info_hash)?;
             }
-            if let Some(implied_port) = &self.implied_port {
-                e.emit_pair(b"implied_port", *implied_port as u8)?;
-            }
             if let Some(port) = &self.port {
                 e.emit_pair(b"port", port)?;
+            }
+            if let Some(target) = &self.target {
+                e.emit_pair(b"target", target)?;
             }
             if let Some(token) = &self.token {
                 e.emit_pair(b"token", AsString(token))?;
@@ -248,8 +257,8 @@ impl TryFrom<&[u8]> for SocketAddrV4Wrap<SocketAddrV4> {
 impl From<&SocketAddrV4Wrap<&SocketAddrV4>> for [u8; 6] {
     fn from(addr: &SocketAddrV4Wrap<&SocketAddrV4>) -> Self {
         let mut bytes = [0u8; 6];
-        bytes.copy_from_slice(&addr.0.ip().octets());
-        bytes[4..].copy_from_slice(&addr.0.port().to_be_bytes());
+        bytes[0..4].copy_from_slice(&addr.0.ip().octets());
+        bytes[4..6].copy_from_slice(&addr.0.port().to_be_bytes());
         bytes
     }
 }
@@ -257,8 +266,8 @@ impl From<&SocketAddrV4Wrap<&SocketAddrV4>> for [u8; 6] {
 /*impl From<SocketAddrV4Wrap<&SocketAddrV4>> for [u8; 6] {
     fn from(addr: SocketAddrV4Wrap<&SocketAddrV4>) -> Self {
         let mut bytes = [0u8; 6];
-        bytes.copy_from_slice(&addr.0.ip().octets());
-        bytes[4..].copy_from_slice(&addr.0.port().to_be_bytes());
+        bytes[0..4].copy_from_slice(&addr.0.ip().octets());
+        bytes[4..6].copy_from_slice(&addr.0.port().to_be_bytes());
         bytes
     }
 }*/
@@ -266,8 +275,8 @@ impl From<&SocketAddrV4Wrap<&SocketAddrV4>> for [u8; 6] {
 impl From<SocketAddrV4Wrap<SocketAddrV4>> for [u8; 6] {
     fn from(addr: SocketAddrV4Wrap<SocketAddrV4>) -> Self {
         let mut bytes = [0u8; 6];
-        bytes.copy_from_slice(&addr.0.ip().octets());
-        bytes[4..].copy_from_slice(&addr.0.port().to_be_bytes());
+        bytes[0..4].copy_from_slice(&addr.0.ip().octets());
+        bytes[4..6].copy_from_slice(&addr.0.port().to_be_bytes());
         bytes
     }
 }
@@ -315,9 +324,16 @@ impl From<[u8; 26]> for Node {
 impl From<&Node> for [u8; 26] {
     fn from(node: &Node) -> Self {
         let mut bytes = [0u8; 26];
-        bytes.copy_from_slice(&node.id.bytes);
-        bytes[20..].copy_from_slice(&Into::<[u8; 6]>::into(SocketAddrV4Wrap(node.addr)));
+        bytes[0..20].copy_from_slice(&node.id.bytes);
+        bytes[20..26].copy_from_slice(&Into::<[u8; 6]>::into(SocketAddrV4Wrap(node.addr)));
         bytes
+    }
+}
+
+impl From<(Hash, SocketAddrV4)> for Node {
+    fn from(pair: (Hash, SocketAddrV4)) -> Self {
+        let (id, addr) = pair;
+        Node { id, addr }
     }
 }
 
@@ -462,7 +478,7 @@ impl ToBencode for Error {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub struct Message {
     pub transaction_id: u16,           // t
     pub msg_type: MessageType,         // y
