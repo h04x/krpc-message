@@ -1,6 +1,6 @@
 use bendy::{decoding::FromBencode, encoding::ToBencode};
 
-use crate::{Hash, Message, MessageType, Node, QueryArgs, QueryType, Response, Error};
+use crate::raw::{Error, Hash, Message, MessageType, Node, QueryArgs, QueryType, Response};
 
 fn ser_deser(bytes: &[u8], msg: Message) {
     let m = Message::from_bencode(bytes).unwrap();
@@ -98,9 +98,9 @@ fn test() {
             msg_type: MessageType::Response,
             query_type: None,
             query_args: None,
-            response: Some(Response { 
+            response: Some(Response {
                 sender_id: b"abcdefghij0123456789".into(), 
-                nodes: None, 
+                nodes: None,
                 values: Some(vec![
                     "65.66.67.68:24929".parse().unwrap(), 
                     "69.70.71.72:24929".parse().unwrap()]), 
@@ -118,7 +118,7 @@ fn test() {
             msg_type: MessageType::Response,
             query_type: None,
             query_args: None,
-            response: Some(Response { 
+            response: Some(Response {
                 sender_id: b"abcdefghij0123456789".into(), 
                 nodes: Some(vec![
                     (b"mnopqrstuvwxyz123456".into(), "65.66.67.68:24929".parse().unwrap()).into(),
@@ -139,11 +139,11 @@ fn test() {
             query_type: None,
             query_args: None,
             response: None,
-            error: Some(Error { 
-                code: 201, 
-                message: "A Generic Error Ocurred".to_string()
+            error: Some(Error {
+                code: 201,
+                message: "A Generic Error Ocurred".to_string(),
             }),
-        }
+        },
     );
     ser_deser(error.0, error.1);
 }
