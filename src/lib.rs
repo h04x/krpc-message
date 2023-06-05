@@ -4,13 +4,15 @@ mod raw_tests;
 
 use std::net::SocketAddrV4;
 
-use bendy::decoding::FromBencode;
-use raw::{malformed, missing, Hash, MalformedError, MessageType, Node, QueryType};
+use bendy::{decoding::FromBencode, encoding::ToBencode};
+use raw::{malformed, missing, Hash, MalformedError, MessageType, Node, QueryType, QueryArgs};
 
 pub struct Ping {
     transaction_id: u16,
     sender_id: Hash,
 }
+
+
 
 impl TryFrom<raw::Message> for Ping {
     type Error = bendy::decoding::Error;
@@ -20,6 +22,26 @@ impl TryFrom<raw::Message> for Ping {
             transaction_id: rm.transaction_id,
             sender_id: a.sender_id,
         })
+    }
+}
+
+impl Ping {
+    pub fn encode(self) -> Result<Vec<u8>, bendy::encoding::Error> {
+        raw::Message {
+            transaction_id: self.transaction_id,
+            msg_type: MessageType::Query,
+            query_type: Some(QueryType::Ping),
+            query_args: Some(QueryArgs {
+                sender_id: self.sender_id,
+                target: None,
+                info_hash: None,
+                implied_port: None,
+                port: None,
+                token: None,
+            }),
+            response: None,
+            error: None,
+        }.to_bencode()
     }
 }
 
@@ -41,6 +63,26 @@ impl TryFrom<raw::Message> for FindNode {
     }
 }
 
+impl FindNode {
+    pub fn encode(self) -> Result<Vec<u8>, bendy::encoding::Error> {
+        raw::Message {
+            transaction_id: self.transaction_id,
+            msg_type: MessageType::Query,
+            query_type: Some(QueryType::FindNone),
+            query_args: Some(QueryArgs {
+                sender_id: self.sender_id,
+                target: Some(self.target),
+                info_hash: None,
+                implied_port: None,
+                port: None,
+                token: None,
+            }),
+            response: None,
+            error: None,
+        }.to_bencode()
+    }
+}
+
 pub struct GetPeers {
     transaction_id: u16,
     sender_id: Hash,
@@ -56,6 +98,26 @@ impl TryFrom<raw::Message> for GetPeers {
             sender_id: a.sender_id,
             info_hash: a.info_hash.ok_or(missing!("info_hash"))?,
         })
+    }
+}
+
+impl GetPeers {
+    pub fn encode(self) -> Result<Vec<u8>, bendy::encoding::Error> {
+        raw::Message {
+            transaction_id: self.transaction_id,
+            msg_type: MessageType::Query,
+            query_type: Some(QueryType::GetPeers),
+            query_args: Some(QueryArgs {
+                sender_id: self.sender_id,
+                target: None,
+                info_hash: Some(self.info_hash),
+                implied_port: None,
+                port: None,
+                token: None,
+            }),
+            response: None,
+            error: None,
+        }.to_bencode()
     }
 }
 
@@ -83,6 +145,26 @@ impl TryFrom<raw::Message> for AnnouncePeer {
     }
 }
 
+impl AnnouncePeer {
+    pub fn encode(self) -> Result<Vec<u8>, bendy::encoding::Error> {
+        raw::Message {
+            transaction_id: self.transaction_id,
+            msg_type: MessageType::Query,
+            query_type: Some(QueryType::AnnouncePeer),
+            query_args: Some(QueryArgs {
+                sender_id: self.sender_id,
+                target: None,
+                info_hash: Some(self.info_hash),
+                implied_port: self.implied_port,
+                port: Some(self.port),
+                token: Some(self.token),
+            }),
+            response: None,
+            error: None,
+        }.to_bencode()
+    }
+}
+
 pub struct Error {
     pub transaction_id: u16,
     pub code: i64,
@@ -98,6 +180,22 @@ impl TryFrom<raw::Message> for Error {
             code: e.code,
             message: e.message,
         })
+    }
+}
+
+impl Error {
+    pub fn encode(self) -> Result<Vec<u8>, bendy::encoding::Error> {
+        raw::Message {
+            transaction_id: self.transaction_id,
+            msg_type: MessageType::Error,
+            query_type: None,
+            query_args: None,
+            response: None,
+            error: Some(raw::Error {
+                code: self.code,
+                message: self.message,
+            }),
+        }.to_bencode()
     }
 }
 
@@ -120,6 +218,24 @@ impl TryFrom<raw::Message> for Response {
             values: r.values,
             token: r.token,
         })
+    }
+}
+
+impl Response {
+    pub fn encode(self) -> Result<Vec<u8>, bendy::encoding::Error> {
+        raw::Message {
+            transaction_id: self.transaction_id,
+            msg_type: MessageType::Response,
+            query_type: None,
+            query_args: None,
+            response: Some(raw::Response {
+                sender_id: self.sender_id, 
+                nodes: self.nodes,
+                values: self.values,
+                token: self.token 
+            }),
+            error: None,
+        }.to_bencode()
     }
 }
 
@@ -148,5 +264,16 @@ impl Message {
             MessageType::Response => Message::Response(rm.try_into()?),
             MessageType::Error => Message::Error(rm.try_into()?),
         })
+    }
+
+    pub fn encode(self) -> Result<Vec<u8>, bendy::encoding::Error> {
+        match self {
+            Self::Ping(p) => p.encode(),
+            Self::FindNode(f) => f.encode(),
+            Self::GetPeers(g) => g.encode(),
+            Self::AnnouncePeer(a) => a.encode(),
+            Self::Response(r) => r.encode(),
+            Self::Error(e) => e.encode()
+        }
     }
 }
