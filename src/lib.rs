@@ -1,31 +1,26 @@
-mod raw;
+pub mod raw;
 #[cfg(test)]
 mod raw_tests;
 
 use std::net::SocketAddrV4;
 
 use bendy::{decoding::FromBencode, encoding::ToBencode};
-use raw::{malformed, missing, Hash, MalformedError, MessageType, Node, QueryType, QueryArgs};
+use raw::{missing, Hash, MessageType, Node, QueryArgs, QueryType};
 
+#[derive(Clone, Debug, PartialEq)]
 pub struct Ping {
     transaction_id: u16,
     sender_id: Hash,
 }
 
-
-
-impl TryFrom<raw::Message> for Ping {
-    type Error = bendy::decoding::Error;
-    fn try_from(rm: raw::Message) -> Result<Self, Self::Error> {
-        let a = rm.query_args.ok_or(missing!("a"))?;
-        Ok(Ping {
-            transaction_id: rm.transaction_id,
-            sender_id: a.sender_id,
-        })
-    }
-}
-
 impl Ping {
+    pub fn new<T: Into<Hash>>(transaction_id: u16, sender_id: T) -> Self {
+        Ping {
+            transaction_id,
+            sender_id: sender_id.into(),
+        }
+    }
+
     pub fn encode(self) -> Result<Vec<u8>, bendy::encoding::Error> {
         raw::Message {
             transaction_id: self.transaction_id,
@@ -41,26 +36,24 @@ impl Ping {
             }),
             response: None,
             error: None,
-        }.to_bencode()
+        }
+        .to_bencode()
+    }
+
+    fn from_raw_msg(rm: raw::Message) -> Result<Self, bendy::decoding::Error> {
+        let a = rm.query_args.ok_or(missing!("a"))?;
+        Ok(Ping {
+            transaction_id: rm.transaction_id,
+            sender_id: a.sender_id,
+        })
     }
 }
 
+#[derive(Clone, Debug, PartialEq)]
 pub struct FindNode {
     transaction_id: u16,
     sender_id: Hash,
     target: Hash,
-}
-
-impl TryFrom<raw::Message> for FindNode {
-    type Error = bendy::decoding::Error;
-    fn try_from(rm: raw::Message) -> Result<Self, Self::Error> {
-        let a = rm.query_args.ok_or(missing!("a"))?;
-        Ok(FindNode {
-            transaction_id: rm.transaction_id,
-            sender_id: a.sender_id,
-            target: a.target.ok_or(missing!("target"))?,
-        })
-    }
 }
 
 impl FindNode {
@@ -79,26 +72,25 @@ impl FindNode {
             }),
             response: None,
             error: None,
-        }.to_bencode()
+        }
+        .to_bencode()
+    }
+
+    fn from_raw_msg(rm: raw::Message) -> Result<Self, bendy::decoding::Error> {
+        let a = rm.query_args.ok_or(missing!("a"))?;
+        Ok(FindNode {
+            transaction_id: rm.transaction_id,
+            sender_id: a.sender_id,
+            target: a.target.ok_or(missing!("target"))?,
+        })
     }
 }
 
+#[derive(Clone, Debug, PartialEq)]
 pub struct GetPeers {
     transaction_id: u16,
     sender_id: Hash,
     info_hash: Hash,
-}
-
-impl TryFrom<raw::Message> for GetPeers {
-    type Error = bendy::decoding::Error;
-    fn try_from(rm: raw::Message) -> Result<Self, Self::Error> {
-        let a = rm.query_args.ok_or(missing!("a"))?;
-        Ok(GetPeers {
-            transaction_id: rm.transaction_id,
-            sender_id: a.sender_id,
-            info_hash: a.info_hash.ok_or(missing!("info_hash"))?,
-        })
-    }
 }
 
 impl GetPeers {
@@ -117,10 +109,21 @@ impl GetPeers {
             }),
             response: None,
             error: None,
-        }.to_bencode()
+        }
+        .to_bencode()
+    }
+
+    fn from_raw_msg(rm: raw::Message) -> Result<Self, bendy::decoding::Error> {
+        let a = rm.query_args.ok_or(missing!("a"))?;
+        Ok(GetPeers {
+            transaction_id: rm.transaction_id,
+            sender_id: a.sender_id,
+            info_hash: a.info_hash.ok_or(missing!("info_hash"))?,
+        })
     }
 }
 
+#[derive(Clone, Debug, PartialEq)]
 pub struct AnnouncePeer {
     transaction_id: u16,
     sender_id: Hash,
@@ -128,21 +131,6 @@ pub struct AnnouncePeer {
     implied_port: Option<bool>,
     port: u16,
     token: Vec<u8>,
-}
-
-impl TryFrom<raw::Message> for AnnouncePeer {
-    type Error = bendy::decoding::Error;
-    fn try_from(rm: raw::Message) -> Result<Self, Self::Error> {
-        let a = rm.query_args.ok_or(missing!("a"))?;
-        Ok(AnnouncePeer {
-            transaction_id: rm.transaction_id,
-            sender_id: a.sender_id,
-            info_hash: a.info_hash.ok_or(missing!("info_hash"))?,
-            implied_port: a.implied_port,
-            port: a.port.ok_or(missing!("port"))?,
-            token: a.token.ok_or(missing!("token"))?,
-        })
-    }
 }
 
 impl AnnouncePeer {
@@ -161,26 +149,28 @@ impl AnnouncePeer {
             }),
             response: None,
             error: None,
-        }.to_bencode()
+        }
+        .to_bencode()
+    }
+
+    fn from_raw_msg(rm: raw::Message) -> Result<Self, bendy::decoding::Error> {
+        let a = rm.query_args.ok_or(missing!("a"))?;
+        Ok(AnnouncePeer {
+            transaction_id: rm.transaction_id,
+            sender_id: a.sender_id,
+            info_hash: a.info_hash.ok_or(missing!("info_hash"))?,
+            implied_port: a.implied_port,
+            port: a.port.ok_or(missing!("port"))?,
+            token: a.token.ok_or(missing!("token"))?,
+        })
     }
 }
 
+#[derive(Clone, Debug, PartialEq)]
 pub struct Error {
     pub transaction_id: u16,
     pub code: i64,
     pub message: String,
-}
-
-impl TryFrom<raw::Message> for Error {
-    type Error = bendy::decoding::Error;
-    fn try_from(rm: raw::Message) -> Result<Self, Self::Error> {
-        let e = rm.error.ok_or(missing!("e"))?;
-        Ok(Error {
-            transaction_id: rm.transaction_id,
-            code: e.code,
-            message: e.message,
-        })
-    }
 }
 
 impl Error {
@@ -195,10 +185,21 @@ impl Error {
                 code: self.code,
                 message: self.message,
             }),
-        }.to_bencode()
+        }
+        .to_bencode()
+    }
+
+    fn from_raw_msg(rm: raw::Message) -> Result<Self, bendy::decoding::Error> {
+        let e = rm.error.ok_or(missing!("e"))?;
+        Ok(Error {
+            transaction_id: rm.transaction_id,
+            code: e.code,
+            message: e.message,
+        })
     }
 }
 
+#[derive(Clone, Debug, PartialEq)]
 pub struct Response {
     pub transaction_id: u16,
     pub sender_id: Hash,
@@ -207,9 +208,25 @@ pub struct Response {
     pub token: Option<Vec<u8>>,
 }
 
-impl TryFrom<raw::Message> for Response {
-    type Error = bendy::decoding::Error;
-    fn try_from(rm: raw::Message) -> Result<Self, Self::Error> {
+impl Response {
+    pub fn encode(self) -> Result<Vec<u8>, bendy::encoding::Error> {
+        raw::Message {
+            transaction_id: self.transaction_id,
+            msg_type: MessageType::Response,
+            query_type: None,
+            query_args: None,
+            response: Some(raw::Response {
+                sender_id: self.sender_id,
+                nodes: self.nodes,
+                values: self.values,
+                token: self.token,
+            }),
+            error: None,
+        }
+        .to_bencode()
+    }
+
+    fn from_raw_msg(rm: raw::Message) -> Result<Self, bendy::decoding::Error> {
         let r = rm.response.ok_or(missing!("r"))?;
         Ok(Response {
             transaction_id: rm.transaction_id,
@@ -221,25 +238,8 @@ impl TryFrom<raw::Message> for Response {
     }
 }
 
-impl Response {
-    pub fn encode(self) -> Result<Vec<u8>, bendy::encoding::Error> {
-        raw::Message {
-            transaction_id: self.transaction_id,
-            msg_type: MessageType::Response,
-            query_type: None,
-            query_args: None,
-            response: Some(raw::Response {
-                sender_id: self.sender_id, 
-                nodes: self.nodes,
-                values: self.values,
-                token: self.token 
-            }),
-            error: None,
-        }.to_bencode()
-    }
-}
-
-enum Message {
+#[derive(Clone, Debug, PartialEq)]
+pub enum Message {
     Ping(Ping),
     FindNode(FindNode),
     GetPeers(GetPeers),
@@ -255,14 +255,16 @@ impl Message {
             MessageType::Query => {
                 let qt = rm.query_type.ok_or(missing!("q"))?;
                 match qt {
-                    QueryType::Ping => Message::Ping(rm.try_into()?),
-                    QueryType::FindNone => Message::FindNode(rm.try_into()?),
-                    QueryType::GetPeers => Message::GetPeers(rm.try_into()?),
-                    QueryType::AnnouncePeer => Message::AnnouncePeer(rm.try_into()?),
+                    QueryType::Ping => Message::Ping(Ping::from_raw_msg(rm)?),
+                    QueryType::FindNone => Message::FindNode(FindNode::from_raw_msg(rm)?),
+                    QueryType::GetPeers => Message::GetPeers(GetPeers::from_raw_msg(rm)?),
+                    QueryType::AnnouncePeer => {
+                        Message::AnnouncePeer(AnnouncePeer::from_raw_msg(rm)?)
+                    }
                 }
             }
-            MessageType::Response => Message::Response(rm.try_into()?),
-            MessageType::Error => Message::Error(rm.try_into()?),
+            MessageType::Response => Message::Response(Response::from_raw_msg(rm)?),
+            MessageType::Error => Message::Error(Error::from_raw_msg(rm)?),
         })
     }
 
@@ -273,7 +275,7 @@ impl Message {
             Self::GetPeers(g) => g.encode(),
             Self::AnnouncePeer(a) => a.encode(),
             Self::Response(r) => r.encode(),
-            Self::Error(e) => e.encode()
+            Self::Error(e) => e.encode(),
         }
     }
 }
