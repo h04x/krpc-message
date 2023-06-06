@@ -57,6 +57,14 @@ pub struct FindNode {
 }
 
 impl FindNode {
+    pub fn new<T: Into<Hash>>(transaction_id: u16, sender_id: T, target: T) -> Self {
+        FindNode {
+            transaction_id,
+            sender_id: sender_id.into(),
+            target: target.into()
+        }
+    }
+    
     pub fn encode(self) -> Result<Vec<u8>, bendy::encoding::Error> {
         raw::Message {
             transaction_id: self.transaction_id,
