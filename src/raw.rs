@@ -1,6 +1,6 @@
 use std::{
     fmt::{self, Debug, Display},
-    net::{IpAddr, SocketAddr, SocketAddrV4},
+    net::{IpAddr, SocketAddr, SocketAddrV4}, ops::Deref,
 };
 
 use bendy::{
@@ -60,6 +60,13 @@ impl fmt::Debug for Hash {
             write!(f, "{:02x}", c)?;
         }
         Ok(())
+    }
+}
+
+impl Deref for Hash {
+    type Target = [u8];
+    fn deref(&self) -> &Self::Target {
+        &self.bytes
     }
 }
 
