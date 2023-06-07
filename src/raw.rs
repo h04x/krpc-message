@@ -8,7 +8,7 @@ use bendy::{
     encoding::{AsString, SingleItemEncoder, ToBencode},
 };
 
-pub use bendy::encoding::Error;
+pub use bendy::encoding;
 
 #[derive(Debug)]
 pub struct MalformedError<T: Display>(pub T);
