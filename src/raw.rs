@@ -32,7 +32,7 @@ macro_rules! missing {
 pub(crate) use malformed;
 pub(crate) use missing;
 
-#[derive(PartialEq, Eq, Clone, Copy, Hash)]
+#[derive(PartialEq, Eq, Clone, Hash, PartialOrd, Ord)]
 pub struct Hash {
     pub bytes: [u8; 20],
 }
